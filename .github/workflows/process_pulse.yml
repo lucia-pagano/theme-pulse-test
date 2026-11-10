@@ -1,0 +1,72 @@
+name: Process UX Pulse Metrics
+
+on:
+  push:
+    paths:
+      - 'ux-pulse/ux-pulse/data/raw_telemetry.txt'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build-metrics:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Calculate Cohorts
+        run: |
+          python - <<EOF
+          import pandas as pd
+          import json
+          import os
+
+          # Using the exact path from your screenshot:
+          raw_file = "ux-pulse/ux-pulse/data/raw_telemetry.txt"
+          output_dir = "ux-pulse/ux-pulse/data"
+          output_file = os.path.join(output_dir, "usage_summary.json")
+
+          if not os.path.exists(raw_file) or os.stat(raw_file).st_size == 0:
+              print("No telemetry data found. Exiting.")
+              exit(0)
+
+          # Read the raw lines of JSON strings
+          with open(raw_file, "r") as f:
+              lines = [json.loads(line) for line in f if line.strip()]
+
+          df = pd.DataFrame(lines)
+
+          # Format Date
+          df["Timestamp"] = pd.to_datetime(df["timestamp"])
+          df["Date"] = df["Timestamp"].dt.date
+
+          # Calculate New vs Recurring cohorts
+          df["FirstSeen"] = df.groupby("user_email")["Date"].transform("min")
+          df["UserType"] = df.apply(lambda r: "New" if r["Date"] == r["FirstSeen"] else "Recurring", axis=1)
+
+          # Aggregate counts
+          cohorts = df.groupby(["Date", "UserType"])["user_email"].nunique().unstack(fill_value=0).reset_index()
+          cohorts["Date"] = cohorts["Date"].astype(str)
+
+          # Ensure output directory exists
+          os.makedirs(output_dir, exist_ok=True)
+
+          # Output JSON
+          cohorts.to_json(output_file, orient="records", indent=2)
+          print("Usage metrics updated!")
+          EOF
+
+      - name: Commit and Push Updated Dashboard Data
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "actions@github.com"
+          git add ux-pulse/ux-pulse/data/usage_summary.json
+          git commit -m "chore: regenerate UX Pulse metrics [skip ci]" || exit 0
+          git push
