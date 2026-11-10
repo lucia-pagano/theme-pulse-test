@@ -21,6 +21,10 @@ jobs:
         with:
           python-version: '3.11'
 
+      # THIS STEP WAS MISSING! 🛠️
+      - name: Install dependencies
+        run: pip install pandas
+
       - name: Calculate Cohorts
         run: |
           python - <<EOF
